@@ -4,20 +4,22 @@
 :root {
     --bg-primary: #0f172a;      /* Deep Slate */
     --bg-secondary: #1e293b;    /* Slate */
-    --accent-primary: #8b5cf6;  /* Vibrant Purple */
-    --accent-secondary: #6366f1;/* Indigo */
-    --accent-hover: #a78bfa;
+    --accent-primary: #d946ef;  /* Magenta */
+    --accent-secondary: #fb923c;/* Sunset Orange */
+    --accent-hover: #f97316;
     --text-main: #f8fafc;
     --text-muted: #cbd5e1;
-    --glass-bg: rgba(30, 41, 59, 0.6);
-    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-bg: rgba(30, 41, 59, 0.65);
+    --glass-border: rgba(255, 255, 255, 0.12);
     --danger: #ef4444;
     --success: #10b981;
 }
 
 body {
     font-family: 'Inter', sans-serif;
-    background: radial-gradient(circle at top left, #1e1b4b, #0f172a 40%, #020617);
+    background: radial-gradient(circle at top left, #4b1d6b, #0f172a 35%, #020617),
+                radial-gradient(circle at bottom right, rgba(251, 146, 60, 0.15), transparent 20%);
+    background-blend-mode: screen;
     color: var(--text-main);
     margin: 0;
     padding: 0;
@@ -38,7 +40,7 @@ h1, h2, h3, h4 {
 
 h2 {
     font-size: 2rem;
-    text-shadow: 0 2px 10px rgba(139, 92, 246, 0.3);
+    text-shadow: 0 2px 12px rgba(251, 115, 22, 0.3);
 }
 
 a {
@@ -77,13 +79,13 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: linear-gradient(135deg, #a855f7, #3b82f6);
+    background: linear-gradient(135deg, #d946ef, #fb923c);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 .navbar .brand i {
     -webkit-text-fill-color: initial;
-    color: #a855f7;
+    color: #fb923c;
 }
 
 .navbar .nav-links {
@@ -130,24 +132,26 @@ a:hover {
 
 .glass-effect {
     background: var(--glass-bg);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
     border: 1px solid var(--glass-border);
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 20px 80px rgba(20, 10, 50, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    transform-style: preserve-3d;
 }
 
 .card {
     background: var(--glass-bg);
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(14px);
     border: 1px solid var(--glass-border);
     padding: 30px;
-    border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-    transition: transform 0.3s, box-shadow 0.3s;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    transition: transform 0.35s ease, box-shadow 0.35s ease;
+    transform-style: preserve-3d;
 }
 .card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5);
+    transform: translateY(-10px) scale(1.01);
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.45), 0 0 40px rgba(251, 115, 22, 0.18);
 }
 
 .auth-box {
@@ -176,11 +180,11 @@ a:hover {
 .btn-primary {
     background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
     color: white;
-    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+    box-shadow: 0 6px 22px rgba(251, 115, 22, 0.35);
 }
 .btn-primary:hover {
-    background: linear-gradient(135deg, #7c3aed, #4f46e5);
-    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6);
+    background: linear-gradient(135deg, #ec4899, #fb923c);
+    box-shadow: 0 8px 28px rgba(251, 115, 22, 0.55);
     transform: translateY(-2px);
     color: white;
 }
@@ -249,8 +253,8 @@ select {
 input:focus, textarea:focus, select:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
-    background: rgba(15, 23, 42, 0.8);
+    box-shadow: 0 0 0 3px rgba(251, 115, 22, 0.22);
+    background: rgba(15, 23, 42, 0.85);
 }
 
 textarea {

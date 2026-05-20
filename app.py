@@ -189,11 +189,11 @@ def admin_signup():
     session['otp'] = otp
 
     message = Message(
-        subject="SmartCart Admin OTP",
+        subject="Keerthi's SmartCart Admin OTP",
         sender=config.MAIL_USERNAME,
         recipients=[email]
     )
-    message.body = f"Your OTP for SmartCart Admin Registration is: {otp}"
+    message.body = f"Your OTP for Keerthi's SmartCart Admin Registration is: {otp}"
 
     try:
         mail.send(message)
@@ -342,13 +342,13 @@ def admin_forgot_password():
         admin_email: str = admin['email']  # type: ignore
         admin_name: str = admin['name']  # type: ignore
         message = Message(
-            subject="SmartCart Admin Password Reset",
+            subject="Keerthi's SmartCart Admin Password Reset",
             sender=config.MAIL_USERNAME,
             recipients=[admin_email]
         )
         message.body = (
             f"Hello {admin_name},\n\n"
-            "Click the link below to reset your SmartCart admin password:\n"
+            "Click the link below to reset your Keerthi's SmartCart admin password:\n"
             f"{reset_link}\n\n"
             "This link will expire in 1 hour. If you did not request this, please ignore this email."
         )
@@ -441,12 +441,12 @@ def contact_page():
     message_text = request.form['message']
 
     message = Message(
-        subject=f"SmartCart Contact: {subject}",
+        subject=f"Keerthi's SmartCart Contact: {subject}",
         sender=config.MAIL_USERNAME,
         recipients=[config.MAIL_USERNAME]
     )
     message.body = (
-        "New contact message from SmartCart:\n\n"
+        "New contact message from Keerthi's SmartCart:\n\n"
         f"Name: {name}\n"
         f"Email: {email}\n"
         f"Phone: {phone}\n"
@@ -900,11 +900,11 @@ def user_register():
     session['user_otp'] = otp
 
     message = Message(
-        subject="SmartCart User OTP",
+        subject="Keerthi's SmartCart User OTP",
         sender=config.MAIL_USERNAME,
         recipients=[email]
     )
-    message.body = f"Your OTP for SmartCart Registration is: {otp}"
+    message.body = f"Your OTP for Keerthi's SmartCart Registration is: {otp}"
 
     try:
         mail.send(message)
@@ -1229,13 +1229,13 @@ def user_forgot_password():
         reset_link = url_for('user_reset_password', token=token, _external=True)
 
         message = Message(
-            subject="SmartCart Password Reset",
+            subject="Keerthi's SmartCart Password Reset",
             sender=config.MAIL_USERNAME,
             recipients=[user_email]
         )
         message.body = (
             f"Hello {user_name},\n\n"
-            "Click the link below to reset your SmartCart password:\n"
+            "Click the link below to reset your Keerthi's SmartCart password:\n"
             f"{reset_link}\n\n"
             "This link will expire in 1 hour. If you did not request this, please ignore this email."
         )

@@ -8,5 +8,5 @@ SECRET_KEY = "smartcart_secret_key"
 MAIL_SERVER = "smtp.gmail.com"
 MAIL_PORT = 587
 MAIL_USE_TLS = True
-MAIL_USERNAME = "careergoals3468@gmail.com"
-MAIL_PASSWORD = "gate@2026"
+MAIL_USERNAME = "uppalaguptam2110@gmail.com"
+MAIL_PASSWORD = "amma@2003"
