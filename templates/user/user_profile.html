@@ -3,41 +3,123 @@
 {% block title %}My Profile - SmartCart{% endblock %}
 
 {% block content %}
+<style>
+    /* View mode is visible by default */
+    .profile-card #view-mode {
+        display: flex !important;
+    }
+    /* Edit form is hidden by default */
+    .profile-card #edit-mode {
+        display: none !important;
+    }
+
+    /* Toggle states when editing class is active on the card */
+    .profile-card.editing #view-mode {
+        display: none !important;
+    }
+    .profile-card.editing #edit-mode {
+        display: flex !important;
+    }
+</style>
+
 <div style="max-width: 600px; margin: 0 auto;">
-    <div class="card glass-effect">
+    <div class="card glass-effect profile-card">
+        
+        <!-- Display Header -->
         <div style="text-align: center; margin-bottom: 30px;">
-            <i class="ph-fill ph-user-circle" style="font-size: 6rem; color: var(--accent-primary);"></i>
-            <h1 style="margin-top: 10px;">{{ user.name }}</h1>
-            <p style="color: var(--text-muted);">Member since 2026</p>
+            {% if user.profile_image %}
+                <div style="width: 100px; height: 100px; margin: 0 auto 10px; border-radius: 50%; overflow: hidden; border: 3px solid var(--accent-primary); display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.05);">
+                    <img src="/static/uploads/user_profiles/{{ user.profile_image }}" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;">
+                </div>
+            {% else %}
+                <i class="ph-fill ph-user-circle" style="font-size: 6rem; color: var(--accent-primary); margin-bottom: 10px; display: block;"></i>
+            {% endif %}
+            <h1 style="margin-top: 10px; font-size: 1.8rem; font-weight: 700;">{{ user.name }}</h1>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Member since 2026</p>
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 20px;">
+        <!-- VIEW MODE CONTAINER (Shown by default) -->
+        <div id="view-mode" style="flex-direction: column; gap: 20px;">
             <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
-                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Full Name</label>
-                <div style="font-size: 1.1rem; font-weight: 500;">{{ user.name }}</div>
+                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px; letter-spacing: 0.5px;">Full Name</label>
+                <div style="font-size: 1.1rem; font-weight: 500; color: #ffffff;">{{ user.name }}</div>
             </div>
 
             <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
-                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Email Address</label>
-                <div style="font-size: 1.1rem; font-weight: 500;">{{ user.email }}</div>
+                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px; letter-spacing: 0.5px;">Email Address</label>
+                <div style="font-size: 1.1rem; font-weight: 500; color: #ffffff;">{{ user.email }}</div>
             </div>
 
             <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
-                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px;">Account Status</label>
+                <label style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 5px; letter-spacing: 0.5px;">Account Status</label>
                 <div style="font-size: 1.1rem; font-weight: 500; color: var(--success); display: flex; align-items: center; gap: 8px;">
-                    <i class="ph-fill ph-check-circle"></i> Active
+                    <i class="ph-fill ph-check-circle" style="font-size: 1.2rem;"></i> Active
                 </div>
             </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 15px;">
+                <button type="button" onclick="toggleEditMode(true)" class="btn btn-secondary" style="flex: 1; padding: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <i class="ph ph-note-pencil" style="font-size: 1.1rem;"></i> Edit Profile
+                </button>
+                <a href="/user-logout" class="btn btn-danger-outline" style="flex: 1; padding: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <i class="ph ph-sign-out" style="font-size: 1.1rem;"></i> Logout
+                </a>
+            </div>
         </div>
 
-        <div style="margin-top: 40px; display: flex; gap: 15px;">
-            <button class="btn btn-secondary" style="flex: 1;">
-                <i class="ph ph-note-pencil"></i> Edit Profile
-            </button>
-            <a href="/user-logout" class="btn btn-danger-outline" style="flex: 1;">
-                <i class="ph ph-sign-out"></i> Logout
-            </a>
-        </div>
+        <!-- EDIT MODE FORM (Hidden by default, shown inside edit state) -->
+        <form id="edit-mode" action="/user/profile" method="POST" enctype="multipart/form-data" style="flex-direction: column; gap: 20px;">
+            
+            <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
+                <label for="name-input" style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.5px;">Full Name</label>
+                <input type="text" id="name-input" name="name" value="{{ user.name }}" required 
+                       style="width: 100%; padding: 12px 15px; background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 1rem; outline: none; transition: border-color 0.2s;"
+                       onfocus="this.style.borderColor='var(--accent-primary)'" onblur="this.style.borderColor='var(--glass-border)'">
+            </div>
+
+            <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
+                <label for="email-input" style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.5px;">Email Address</label>
+                <input type="email" id="email-input" name="email" value="{{ user.email }}" required 
+                       style="width: 100%; padding: 12px 15px; background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 1rem; outline: none; transition: border-color 0.2s;"
+                       onfocus="this.style.borderColor='var(--accent-primary)'" onblur="this.style.borderColor='var(--glass-border)'">
+            </div>
+
+            <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
+                <label for="password-input" style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.5px;">New Password (leave blank to keep current)</label>
+                <input type="password" id="password-input" name="password" placeholder="Enter new password" 
+                       style="width: 100%; padding: 12px 15px; background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 1rem; outline: none; transition: border-color 0.2s;"
+                       onfocus="this.style.borderColor='var(--accent-primary)'" onblur="this.style.borderColor='var(--glass-border)'">
+            </div>
+
+            <div style="padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid var(--glass-border);">
+                <label for="image-input" style="display: block; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.5px;">Upload Profile Image</label>
+                <input type="file" id="image-input" name="profile_image" accept="image/*" 
+                       style="width: 100%; padding: 8px; font-size: 0.9rem; color: var(--text-muted);">
+            </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 15px;">
+                <button type="submit" class="btn btn-primary" style="flex: 1; padding: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <i class="ph ph-floppy-disk" style="font-size: 1.1rem;"></i> Save Changes
+                </button>
+                <button type="button" onclick="toggleEditMode(false)" class="btn btn-secondary" style="flex: 1; padding: 12px; font-weight: 600;">
+                    Cancel
+                </button>
+            </div>
+        </form>
+
     </div>
 </div>
+
+<script>
+function toggleEditMode(showEdit) {
+    const card = document.querySelector('.profile-card');
+    if (!card) return;
+    
+    if (showEdit) {
+        card.classList.add('editing');
+    } else {
+        card.classList.remove('editing');
+    }
+}
+</script>
 {% endblock %}

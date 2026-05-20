@@ -8,6 +8,20 @@
         <i class="ph ph-arrow-left"></i> Back to Products
     </a>
 
+    <!-- Flash Messages (Amazon Style) -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div style="margin-bottom: 20px;">
+          {% for category, message in messages %}
+            <div class="glass-effect" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 12px 18px; display: flex; align-items: center; gap: 10px; color: #10b981; font-weight: 600; font-size: 0.95rem; box-shadow: 0 4px 15px rgba(0,0,0,0.15);">
+                <i class="ph-fill ph-check-circle" style="font-size: 1.25rem;"></i>
+                <span>{{ message }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
     <div class="card glass-effect" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 25px; align-items: center; padding: 25px;">
         <!-- Product Image -->
         <div style="background: rgba(255,255,255,0.03); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--glass-border); height: 260px;">
@@ -39,11 +53,11 @@
             </div>
 
             <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">
-                        <i class="ph ph-shopping-cart-simple"></i> Add to Cart
-                    </button>
-                    <button class="btn btn-secondary" style="padding: 10px; width: 45px;">
+                <div style="display: flex; gap: 10px; width: 100%;">
+                    <form action="/user/add-to-cart/{{ product.product_id }}" method="GET" style="flex: 1; margin: 0; padding: 0;">
+                        <button type="submit" class="btn btn-secondary" style="width: 100%; padding: 10px; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 8px;">Add to Cart</button>
+                    </form>
+                    <button class="btn btn-secondary" style="padding: 10px; width: 45px; display: flex; align-items: center; justify-content: center;">
                         <i class="ph ph-heart" style="font-size: 1.2rem;"></i>
                     </button>
                 </div>
@@ -62,4 +76,68 @@
         </div>
     </div>
 </div>
+
+<script>
+function addToCart(button, productId) {
+    const originalHTML = button ? button.innerHTML : null;
+    
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="ph ph-circle-notch spinner" style="animation: spin 1s linear infinite;"></i> Adding...';
+    }
+
+    fetch(`/user/add-to-cart-ajax/${productId}`)
+        .then(response => {
+            if (response.status === 401) {
+                window.location.href = '/user-login';
+                return;
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (!data) return;
+
+            if (data.error) {
+                showToast(data.error, 'danger');
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                }
+                return;
+            }
+
+            // Update cart count
+            const cartCountEls = document.querySelectorAll('#cart-count');
+            cartCountEls.forEach(el => {
+                el.innerText = data.cart_count;
+                if (data.cart_count > 0) {
+                    el.className = 'badge rounded-pill bg-primary';
+                    el.style.background = 'var(--accent-primary)';
+                    el.style.color = '#ffffff';
+                } else {
+                    el.className = 'badge rounded-pill';
+                    el.style.background = 'rgba(255, 255, 255, 0.1)';
+                    el.style.color = 'rgba(255, 255, 255, 0.5)';
+                }
+            });
+
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '<i class="ph ph-check"></i> Added!';
+                setTimeout(() => {
+                    button.innerHTML = originalHTML;
+                }, 2000);
+            }
+
+            showToast("✔ " + data.message, 'success');
+        })
+        .catch(error => {
+            console.error("Error:", error);
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            }
+        });
+}
+</script>
 {% endblock %}

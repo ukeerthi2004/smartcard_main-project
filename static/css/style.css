@@ -547,3 +547,16 @@ td img {
         grid-template-columns: 1fr !important;
     }
 }
+
+/* Spinner Animation */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+.spinner {
+    display: inline-block;
+}

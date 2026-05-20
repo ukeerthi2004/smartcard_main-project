@@ -1,18 +1,21 @@
-from flask import Flask, render_template, request, redirect, session, flash
+from flask import Flask, render_template, request, redirect, session, flash, jsonify, url_for
 from flask_mail import Mail, Message
-from flask import url_for
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 import mysql.connector
+from mysql.connector import Error as MySQLError
 import bcrypt
 import random
 import os
+import re
 from werkzeug.utils import secure_filename
 import config
 
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
-
+assert app.secret_key is not None, "SECRET_KEY must be set in config"
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # ---------------- EMAIL CONFIGURATION ----------------
 app.config['MAIL_SERVER'] = config.MAIL_SERVER
@@ -20,29 +23,57 @@ app.config['MAIL_PORT'] = config.MAIL_PORT
 app.config['MAIL_USE_TLS'] = config.MAIL_USE_TLS
 app.config['MAIL_USERNAME'] = config.MAIL_USERNAME
 app.config['MAIL_PASSWORD'] = config.MAIL_PASSWORD
+app.config['MAIL_DEFAULT_SENDER'] = config.MAIL_USERNAME
+app.config['MAIL_USE_SSL'] = False
 
 # ---------------- IMAGE UPLOAD CONFIGURATION ----------------
-app.config['UPLOAD_FOLDER'] = 'static/uploads/product_images'
+BASE_UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads')
+app.config['UPLOAD_FOLDER'] = os.path.join(BASE_UPLOAD_FOLDER, 'product_images')
+app.config['USER_UPLOAD_FOLDER'] = os.path.join(BASE_UPLOAD_FOLDER, 'user_profiles')
+app.config['ADMIN_UPLOAD_FOLDER'] = os.path.join(BASE_UPLOAD_FOLDER, 'admin_profiles')
 
 mail = Mail(app)
-password_reset_serializer = URLSafeTimedSerializer(app.secret_key)
+password_reset_serializer = URLSafeTimedSerializer(str(app.secret_key))  # type: ignore
 PASSWORD_RESET_MAX_AGE = 3600
 
 
-# Dynamic headers, footers, stylesheets, and scripts are fully managed by modern base templates.
+def create_folder(path: str):
+    try:
+        os.makedirs(path, exist_ok=True)
+        return True
+    except OSError as exc:
+        print(f"[ERROR] Cannot create upload folder {path}: {exc}")
+        return False
+
+
+def validate_email(email: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
+
+
+def validate_password(password: str) -> bool:
+    return len(password or "") >= 6
+
+
+for folder in [app.config['UPLOAD_FOLDER'], app.config['USER_UPLOAD_FOLDER'], app.config['ADMIN_UPLOAD_FOLDER']]:
+    create_folder(folder)
+
 
 # ---------------- DB CONNECTION FUNCTION --------------
+
 def get_db_connection():
-    return mysql.connector.connect(
-        host=config.DB_HOST,
-        user=config.DB_USER,
-        password=config.DB_PASSWORD,
-        database=config.DB_NAME
-    )
+    try:
+        return mysql.connector.connect(
+            host=config.DB_HOST,
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            database=config.DB_NAME
+        )
+    except MySQLError as ex:
+        print(f"[DB ERROR] Failed to connect: {ex}")
+        raise
 
 
-USER_UPLOAD_FOLDER = 'static/uploads/user_profiles'
-app.config['USER_UPLOAD_FOLDER'] = USER_UPLOAD_FOLDER
+
 
 
 def init_user_tables():
@@ -120,15 +151,32 @@ def admin_signup():
     if request.method == "GET":
         return render_template("admin/admin_signup.html")
 
-    name = request.form['name']
-    email = request.form['email']
+    name = request.form.get('name', '').strip()
+    email = request.form.get('email', '').strip().lower()
 
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT admin_id FROM admin WHERE email=%s", (email,))
-    existing_admin = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    if not name or not email:
+        flash("Name and email are required to sign up.", "danger")
+        return redirect('/admin-signup')
+
+    if not validate_email(email):
+        flash("Please enter a valid email address.", "danger")
+        return redirect('/admin-signup')
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT admin_id FROM admin WHERE email=%s", (email,))
+        existing_admin = cursor.fetchone()
+    except Exception as ex:
+        print(f"[DB ERROR] Admin signup check failed: {ex}")
+        flash("Unable to verify email right now. Please try again later.", "danger")
+        return redirect('/admin-signup')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     if existing_admin:
         flash("This email is already registered. Please login instead.", "danger")
@@ -146,9 +194,15 @@ def admin_signup():
         recipients=[email]
     )
     message.body = f"Your OTP for SmartCart Admin Registration is: {otp}"
-    mail.send(message)
 
-    flash("OTP sent to your email!", "success")
+    try:
+        mail.send(message)
+        flash("OTP sent to your email!", "success")
+    except Exception as ex:
+        print(f"[MAIL ERROR] Admin OTP mail failed: {ex}")
+        flash("Unable to send OTP email. Check your Gmail App Password and try again.", "danger")
+        return redirect('/admin-signup')
+
     return redirect('/verify-otp')
 
 # ---------------------------------------------------------
@@ -165,24 +219,43 @@ def verify_otp_get():
 @app.route('/verify-otp', methods=['POST'])
 def verify_otp_post():
 
-    user_otp = request.form['otp']
-    password = request.form['password']
+    user_otp = request.form.get('otp', '').strip()
+    password = request.form.get('password', '')
+    signup_name = session.get('signup_name')
+    signup_email = session.get('signup_email')
+
+    if not signup_name or not signup_email or not user_otp or not password:
+        flash("Please complete all fields and request OTP again.", "danger")
+        return redirect('/admin-signup')
 
     if session.get('otp') != user_otp:
         flash("Invalid OTP. Try again!", "danger")
         return redirect('/verify-otp')
 
+    if not validate_password(password):
+        flash("Password must be at least 6 characters.", "danger")
+        return redirect('/verify-otp')
+
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO admin (name, email, password) VALUES (%s, %s, %s)",
-        (session['signup_name'], session['signup_email'], hashed_password)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO admin (name, email, password) VALUES (%s, %s, %s)",
+            (signup_name, signup_email, hashed_password)
+        )
+        conn.commit()
+    except Exception as ex:
+        print(f"[DB ERROR] Saving admin after OTP failed: {ex}")
+        flash("Unable to create admin account right now. Please try again.", "danger")
+        return redirect('/admin-signup')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     session.pop('otp', None)
     session.pop('signup_name', None)
@@ -200,30 +273,48 @@ def admin_login():
     if request.method == 'GET':
         return render_template("admin/admin_login.html")
 
-    email = request.form['email']
-    password = request.form['password']
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
 
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM admin WHERE email=%s", (email,))
-    admin = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    if not email or not password:
+        flash("Both email and password are required.", "danger")
+        return redirect('/admin-login')
+
+    if not validate_email(email):
+        flash("Enter a valid email address.", "danger")
+        return redirect('/admin-login')
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM admin WHERE email=%s", (email,))
+        admin = cursor.fetchone()
+    except Exception as ex:
+        print(f"[DB ERROR] Admin login failed: {ex}")
+        flash("Unable to log in right now. Please try again later.", "danger")
+        return redirect('/admin-login')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     if admin is None:
         flash("Email not found! Please register first.", "danger")
         return redirect('/admin-login')
 
-    stored_hashed_password = admin['password'].encode('utf-8')
-    if not bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password):
+    hashed_password: str = admin['password']  # type: ignore
+    if not bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8')):
         flash("Incorrect password! Try again.", "danger")
         return redirect('/admin-login')
 
-    session['admin_id'] = admin['admin_id']
-    session['admin_name'] = admin['name']
-    session['admin_email'] = admin['email']
+    session['admin_id'] = admin['admin_id']  # type: ignore
+    session['admin_name'] = admin['name']  # type: ignore
+    session['admin_email'] = admin['email']  # type: ignore
+    session.modified = True
 
-    flash(f"Welcome, {admin['name']}", "success")
+    flash(f"Welcome, {admin['name']}", "success")  # type: ignore
     return redirect('/admin-dashboard')
 
 # ---------------------------------------------------------
@@ -248,13 +339,15 @@ def admin_forgot_password():
         token = create_password_reset_token(admin)
         reset_link = url_for('admin_reset_password', token=token, _external=True)
 
+        admin_email: str = admin['email']  # type: ignore
+        admin_name: str = admin['name']  # type: ignore
         message = Message(
             subject="SmartCart Admin Password Reset",
             sender=config.MAIL_USERNAME,
-            recipients=[admin['email']]
+            recipients=[admin_email]
         )
         message.body = (
-            f"Hello {admin['name']},\n\n"
+            f"Hello {admin_name},\n\n"
             "Click the link below to reset your SmartCart admin password:\n"
             f"{reset_link}\n\n"
             "This link will expire in 1 hour. If you did not request this, please ignore this email."
@@ -414,7 +507,10 @@ def add_item():
         flash("Please upload a product image!", "danger")
         return redirect('/admin/add-item')
 
-    filename = secure_filename(image_file.filename)
+    filename = secure_filename(image_file.filename)  # type: ignore
+    if not filename:
+        flash("Invalid filename!", "danger")
+        return redirect('/admin/add-item')
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     image_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
@@ -467,7 +563,8 @@ def item_list():
 
     # Get total count for pagination
     cursor.execute("SELECT COUNT(*) AS total FROM products" + base_where, params[:])
-    total = cursor.fetchone()['total']
+    result = cursor.fetchone()
+    total: int = int(result['total']) if result else 0  # type: ignore
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = max(1, min(page, total_pages))
 
@@ -566,12 +663,17 @@ def update_item(item_id):
         flash("Product not found!", "danger")
         return redirect('/admin/item-list')
 
-    old_image_name = product['image']
+    old_image_name: str = product['image']  # type: ignore
 
     # If new image uploaded, replace old image
     if new_image and new_image.filename != "":
 
-        new_filename = secure_filename(new_image.filename)
+        new_filename = secure_filename(new_image.filename)  # type: ignore
+        if not new_filename:
+            flash("Invalid filename!", "danger")
+            cursor.close()
+            conn.close()
+            return redirect('/admin/update-item/' + str(item_id))
 
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         new_image.save(os.path.join(app.config['UPLOAD_FOLDER'], new_filename))
@@ -588,11 +690,12 @@ def update_item(item_id):
         final_image_name = old_image_name
 
     # Update product in database
+    final_image: str = final_image_name
     cursor.execute("""
         UPDATE products
         SET name=%s, description=%s, category=%s, price=%s, image=%s
         WHERE product_id=%s
-    """, (name, description, category, price, final_image_name, item_id))
+    """, (name, description, category, price, final_image, item_id))
 
     conn.commit()
     cursor.close()
@@ -620,7 +723,8 @@ def delete_item(item_id):
 
     if product:
         # Delete image file from folder
-        image_path = os.path.join(app.config['UPLOAD_FOLDER'], product['image'])
+        product_image: str = product['image']  # type: ignore
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], product_image)
         if os.path.exists(image_path):
             os.remove(image_path)
 
@@ -636,8 +740,7 @@ def delete_item(item_id):
 
     return redirect('/admin/item-list')
 
-ADMIN_UPLOAD_FOLDER = 'static/uploads/admin_profiles'
-app.config['ADMIN_UPLOAD_FOLDER'] = ADMIN_UPLOAD_FOLDER
+ADMIN_UPLOAD_FOLDER = app.config['ADMIN_UPLOAD_FOLDER']
 
 # =================================================================
 # ROUTE 14: SHOW ADMIN PROFILE DATA
@@ -686,20 +789,31 @@ def admin_profile_update():
     # Fetch old admin data
     cursor.execute("SELECT * FROM admin WHERE admin_id = %s", (admin_id,))
     admin = cursor.fetchone()
+    if not admin:
+        cursor.close()
+        conn.close()
+        flash("Admin not found!", "danger")
+        return redirect('/admin/profile')
 
-    old_image_name = admin['profile_image']
+    old_image_name = admin['profile_image']  # type: ignore
 
     # Update password only if entered
     if new_password:
         hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     else:
-        hashed_password = admin['password']  # keep old password
+        admin_password: str = admin['password']  # type: ignore
+        hashed_password = admin_password  # keep old password
 
     # Process new profile image if uploaded
     if new_image and new_image.filename != "":
         
         from werkzeug.utils import secure_filename
-        new_filename = secure_filename(new_image.filename)
+        new_filename = secure_filename(new_image.filename)  # type: ignore
+        if not new_filename:
+            flash("Invalid filename!", "danger")
+            cursor.close()
+            conn.close()
+            return redirect('/admin/profile')
 
         # Save new image
         os.makedirs(app.config['ADMIN_UPLOAD_FOLDER'], exist_ok=True)
@@ -708,7 +822,7 @@ def admin_profile_update():
 
         # Delete old image
         if old_image_name:
-            old_image_path = os.path.join(app.config['ADMIN_UPLOAD_FOLDER'], old_image_name)
+            old_image_path = os.path.join(app.config['ADMIN_UPLOAD_FOLDER'], str(old_image_name))  # type: ignore
             if os.path.exists(old_image_path):
                 os.remove(old_image_path)
 
@@ -721,7 +835,7 @@ def admin_profile_update():
         UPDATE admin
         SET name=%s, email=%s, password=%s, profile_image=%s
         WHERE admin_id=%s
-    """, (name, email, hashed_password, final_image_name, admin_id))
+    """, (name, email, hashed_password, str(final_image_name) if final_image_name else None, admin_id))  # type: ignore
 
     conn.commit()
     cursor.close()
@@ -742,16 +856,37 @@ def user_register():
     if request.method == 'GET':
         return render_template("user/user_register.html")
 
-    name = request.form['name']
-    email = request.form['email']
-    password = request.form['password']
+    name = request.form.get('name', '').strip()
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
 
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT user_id FROM users WHERE email=%s", (email,))
-    existing = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    if not name or not email or not password:
+        flash("Name, email, and password are required.", "danger")
+        return redirect('/user-register')
+
+    if not validate_email(email):
+        flash("Please enter a valid email address.", "danger")
+        return redirect('/user-register')
+
+    if not validate_password(password):
+        flash("Password must be at least 6 characters.", "danger")
+        return redirect('/user-register')
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT user_id FROM users WHERE email=%s", (email,))
+        existing = cursor.fetchone()
+    except Exception as ex:
+        print(f"[DB ERROR] User signup check failed: {ex}")
+        flash("Unable to verify email right now. Please try again later.", "danger")
+        return redirect('/user-register')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     if existing:
         flash("This email is already registered. Please login.", "danger")
@@ -770,9 +905,15 @@ def user_register():
         recipients=[email]
     )
     message.body = f"Your OTP for SmartCart Registration is: {otp}"
-    mail.send(message)
 
-    flash("OTP sent to your email!", "success")
+    try:
+        mail.send(message)
+        flash("OTP sent to your email!", "success")
+    except Exception as ex:
+        print(f"[MAIL ERROR] User OTP mail failed: {ex}")
+        flash("Unable to send OTP email. Check your Gmail App Password and try again.", "danger")
+        return redirect('/user-register')
+
     return redirect('/user-verify-otp')
 
 # ---------------------------------------------------------
@@ -783,17 +924,52 @@ def user_verify_otp():
     if request.method == 'GET':
         return render_template("user/user_verify_otp.html")
 
-    user_otp = request.form['otp']
-    password = request.form['password']
+    user_otp = request.form.get('otp', '').strip()
+    password = request.form.get('password', '')
+    signup_name = session.get('user_signup_name')
+    signup_email = session.get('user_signup_email')
+
+    if not signup_name or not signup_email or not user_otp or not password:
+        flash("Please fill all fields and request a new OTP if needed.", "danger")
+        return redirect('/user-register')
 
     if session.get('user_otp') != user_otp:
         flash("Invalid OTP. Try again!", "danger")
         return redirect('/user-verify-otp')
 
+    if not validate_password(password):
+        flash("Password must be at least 6 characters.", "danger")
+        return redirect('/user-verify-otp')
+
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
+            (signup_name, signup_email, hashed)
+        )
+        conn.commit()
+    except Exception as ex:
+        print(f"[DB ERROR] Saving user after OTP failed: {ex}")
+        flash("Unable to complete registration right now. Please try again.", "danger")
+        return redirect('/user-register')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+    session.pop('user_otp', None)
+    session.pop('user_signup_name', None)
+    session.pop('user_signup_email', None)
+    session.pop('user_signup_password', None)
+
+    flash("Registered successfully! Please login.", "success")
+    return redirect('/user-login')
+
     cursor.execute(
         "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
         (session['user_signup_name'], session['user_signup_email'], hashed)
@@ -818,29 +994,48 @@ def user_login():
     if request.method == 'GET':
         return render_template("user/user_login.html")
 
-    email = request.form['email']
-    password = request.form['password']
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
 
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
-    user = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    if not email or not password:
+        flash("Email and password are required.", "danger")
+        return redirect('/user-login')
+
+    if not validate_email(email):
+        flash("Enter a valid email address.", "danger")
+        return redirect('/user-login')
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
+        user = cursor.fetchone()
+    except Exception as ex:
+        print(f"[DB ERROR] User login failed: {ex}")
+        flash("Unable to log in right now. Please try again later.", "danger")
+        return redirect('/user-login')
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
 
     if user is None:
         flash("Email not found! Please register first.", "danger")
         return redirect('/user-login')
 
-    if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
+    user_password: str = user['password']  # type: ignore
+    if not bcrypt.checkpw(password.encode('utf-8'), user_password.encode('utf-8')):
         flash("Incorrect password!", "danger")
         return redirect('/user-login')
 
-    session['user_id'] = user['user_id']
-    session['user_name'] = user['name']
-    session['user_email'] = user['email']
+    session['user_id'] = user['user_id']  # type: ignore
+    session['user_name'] = user['name']  # type: ignore
+    session['user_email'] = user['email']  # type: ignore
+    session.modified = True
 
-    flash(f"Welcome, {user['name']}!", "success")
+    flash(f"Welcome, {user['name']}!", "success")  # type: ignore
     return redirect('/user-home')
 
 # ---------------------------------------------------------
@@ -923,90 +1118,6 @@ def user_product_detail(product_id):
     return render_template("user/product_details.html", product=product)
 
 
-# ---------------------------------------------------------
-# USER ROUTE 6: ADD TO CART
-# ---------------------------------------------------------
-@app.route('/user/add-to-cart/<int:product_id>')
-def user_add_to_cart(product_id):
-    if 'user_id' not in session:
-        flash("Please login first!", "danger")
-        return redirect('/user-login')
-
-    user_id = session['user_id']
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    # Check if already in cart
-    cursor.execute(
-        "SELECT cart_id, quantity FROM cart WHERE user_id=%s AND product_id=%s",
-        (user_id, product_id)
-    )
-    existing = cursor.fetchone()
-
-    if existing:
-        cursor.execute(
-            "UPDATE cart SET quantity = quantity + 1 WHERE cart_id=%s",
-            (existing['cart_id'],)
-        )
-    else:
-        cursor.execute(
-            "INSERT INTO cart (user_id, product_id, quantity) VALUES (%s, %s, 1)",
-            (user_id, product_id)
-        )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    flash("Product added to cart!", "success")
-    return redirect('/user-home')
-
-# ---------------------------------------------------------
-# USER ROUTE 7: VIEW CART
-# ---------------------------------------------------------
-@app.route('/user/cart')
-def user_cart():
-    if 'user_id' not in session:
-        flash("Please login first!", "danger")
-        return redirect('/user-login')
-
-    user_id = session['user_id']
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT c.cart_id, c.quantity, p.product_id, p.name, p.category, p.price, p.image
-        FROM cart c
-        JOIN products p ON c.product_id = p.product_id
-        WHERE c.user_id = %s
-    """, (user_id,))
-    cart_items = cursor.fetchall()
-    cursor.close()
-    conn.close()
-
-    total = sum(item['price'] * item['quantity'] for item in cart_items)
-
-    return render_template("user/user_cart.html", cart_items=cart_items, total=total)
-
-# ---------------------------------------------------------
-# USER ROUTE 8: REMOVE FROM CART
-# ---------------------------------------------------------
-@app.route('/user/remove-from-cart/<int:cart_id>')
-def user_remove_from_cart(cart_id):
-    if 'user_id' not in session:
-        flash("Please login first!", "danger")
-        return redirect('/user-login')
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM cart WHERE cart_id=%s AND user_id=%s", (cart_id, session['user_id']))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    flash("Item removed from cart.", "success")
-    return redirect('/user/cart')
 
 # ---------------------------------------------------------
 # USER ROUTE 9: USER PROFILE
@@ -1039,22 +1150,35 @@ def user_profile():
     cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
     user = cursor.fetchone()
 
+    if not user:
+        cursor.close()
+        conn.close()
+        flash("User not found!", "danger")
+        return redirect('/user/profile')
+
     if new_password:
         hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     else:
-        hashed = user['password']
+        user_password: str = user['password']  # type: ignore
+        hashed = user_password
 
-    old_image_name = user.get('profile_image')
+    old_image_name = user['profile_image'] if 'profile_image' in user else None  # type: ignore
 
     # Handle profile image upload
     if new_image and new_image.filename != '':
-        new_filename = secure_filename(new_image.filename)
+        new_filename = secure_filename(new_image.filename)  # type: ignore
+        if not new_filename:
+            flash("Invalid filename!", "danger")
+            cursor.close()
+            conn.close()
+            return redirect('/user/profile')
+        
         os.makedirs(app.config['USER_UPLOAD_FOLDER'], exist_ok=True)
         new_image.save(os.path.join(app.config['USER_UPLOAD_FOLDER'], new_filename))
 
         # Delete old image
         if old_image_name:
-            old_path = os.path.join(app.config['USER_UPLOAD_FOLDER'], old_image_name)
+            old_path = os.path.join(app.config['USER_UPLOAD_FOLDER'], str(old_image_name))  # type: ignore
             if os.path.exists(old_path):
                 os.remove(old_path)
 
@@ -1064,7 +1188,7 @@ def user_profile():
 
     cursor.execute(
         "UPDATE users SET name=%s, email=%s, password=%s, profile_image=%s WHERE user_id=%s",
-        (name, email, hashed, final_image, user_id)
+        (name, email, hashed, str(final_image) if final_image else None, user_id)  # type: ignore
     )
     conn.commit()
     cursor.close()
@@ -1094,8 +1218,12 @@ def user_forgot_password():
     conn.close()
 
     if user:
+        user_id_val: int = user["user_id"]  # type: ignore
+        user_email: str = user["email"]  # type: ignore
+        user_name: str = user['name']  # type: ignore
+        
         token = password_reset_serializer.dumps(
-            {"user_id": user["user_id"], "email": user["email"]},
+            {"user_id": user_id_val, "email": user_email},
             salt="user-password-reset"
         )
         reset_link = url_for('user_reset_password', token=token, _external=True)
@@ -1103,10 +1231,10 @@ def user_forgot_password():
         message = Message(
             subject="SmartCart Password Reset",
             sender=config.MAIL_USERNAME,
-            recipients=[user['email']]
+            recipients=[user_email]
         )
         message.body = (
-            f"Hello {user['name']},\n\n"
+            f"Hello {user_name},\n\n"
             "Click the link below to reset your SmartCart password:\n"
             f"{reset_link}\n\n"
             "This link will expire in 1 hour. If you did not request this, please ignore this email."
@@ -1164,6 +1292,171 @@ def user_reset_password(token):
 
     flash("Password changed successfully. Please login with your new password.", "success")
     return redirect('/user-login')
+
+
+# =================================================================
+# ADD ITEM TO CART
+# =================================================================
+@app.route('/user/add-to-cart/<int:product_id>')
+def add_to_cart(product_id):
+
+    if 'user_id' not in session:
+        flash("Please login first!", "danger")
+        return redirect('/user-login')
+
+    # Create cart if doesn't exist
+    if 'cart' not in session:
+        session['cart'] = {}
+
+    cart = session['cart']
+
+    # Get product
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM products WHERE product_id=%s", (product_id,))
+    product = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not product:
+        flash("Product not found.", "danger")
+        return redirect(request.referrer)
+
+    pid = str(product_id)
+
+    # If exists → increase quantity
+    if pid in cart:
+        cart[pid]['quantity'] += 1
+    else:
+        cart[pid] = {
+            'name': product['name'],  # type: ignore
+            'price': float(product['price']),  # type: ignore
+            'image': product['image'],  # type: ignore
+            'quantity': 1
+        }
+
+    session['cart'] = cart
+    session.modified = True
+
+    flash("Item added to cart!", "success")
+    return redirect(request.referrer)   # ⭐ Return to same page
+
+
+# =================================================================
+# ADD ITEM TO CART AJAX
+# =================================================================
+@app.route('/user/add-to-cart-ajax/<int:product_id>')
+def add_to_cart_ajax(product_id):
+
+    if 'user_id' not in session:
+        return {"error": "not_logged_in"}, 401
+
+    if 'cart' not in session:
+        session['cart'] = {}
+
+    cart = session['cart']
+
+    # Fetch product from DB
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM products WHERE product_id=%s", (product_id,))
+    product = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not product:
+        return {"error": "Product not found"}, 404
+
+    pid = str(product_id)
+
+    # Increase quantity if exists
+    if pid in cart:
+        cart[pid]['quantity'] += 1
+    else:
+        cart[pid] = {
+            'name': product['name'],  # type: ignore
+            'price': float(product['price']),  # type: ignore
+            'image': product['image'],  # type: ignore
+            'quantity': 1
+        }
+
+    session['cart'] = cart
+    session.modified = True
+
+    # Return JSON response
+    return {
+        "message": "Item added to cart!",
+        "cart_count": len(cart)
+    }
+
+
+# =================================================================
+# VIEW CART PAGE
+# =================================================================
+@app.route('/user/cart')
+def view_cart():
+
+    if 'user_id' not in session:
+        flash("Please login first!", "danger")
+        return redirect('/user-login')
+
+    cart = session.get('cart', {})
+
+    # Calculate total
+    grand_total = sum(item['price'] * item['quantity'] for item in cart.values())
+
+    return render_template("user/cart.html", cart=cart, grand_total=grand_total)
+
+# =================================================================
+# INCREASE QUANTITY
+# =================================================================
+@app.route('/user/cart/increase/<pid>')
+def increase_quantity(pid):
+
+    cart = session.get('cart', {})
+
+    if pid in cart:
+        cart[pid]['quantity'] += 1
+
+    session['cart'] = cart
+    session.modified = True
+    return redirect('/user/cart')
+
+# =================================================================
+# DECREASE QUANTITY
+# =================================================================
+@app.route('/user/cart/decrease/<pid>')
+def decrease_quantity(pid):
+
+    cart = session.get('cart', {})
+
+    if pid in cart:
+        cart[pid]['quantity'] -= 1
+
+        # If quantity becomes 0 → remove item
+        if cart[pid]['quantity'] <= 0:
+            cart.pop(pid)
+
+    session['cart'] = cart
+    session.modified = True
+    return redirect('/user/cart')
+
+# =================================================================
+# REMOVE ITEM
+# =================================================================
+@app.route('/user/cart/remove/<pid>')
+def remove_from_cart(pid):
+
+    cart = session.get('cart', {})
+
+    if pid in cart:
+        cart.pop(pid)
+
+    session['cart'] = cart
+    session.modified = True
+
+    flash("Item removed!", "success")
+    return redirect('/user/cart')
 
 
 # ---------------------------------------------------------

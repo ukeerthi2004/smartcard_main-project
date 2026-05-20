@@ -35,7 +35,16 @@
                     {% if session.get('user_id') %}
                         <a href="/user-home" class="nav-link"><i class="ph ph-squares-four"></i> Dashboard</a>
                         <a href="/user/products" class="nav-link"><i class="ph ph-bag"></i> View Products</a>
-                        <a href="/user/cart" class="nav-link"><i class="ph ph-shopping-cart"></i> Cart Items</a>
+                        <a href="/user/cart" class="nav-link">
+                            <i class="ph ph-shopping-cart"></i> Cart
+                            {% if session.get('cart') %}
+                                <span id="cart-count" class="badge rounded-pill bg-primary" style="font-size: 0.75rem; padding: 3px 6px; margin-left: 4px; vertical-align: middle;">
+                                    {{ session.get('cart')|length }}
+                                </span>
+                            {% else %}
+                                <span id="cart-count" class="badge rounded-pill" style="font-size: 0.75rem; padding: 3px 6px; margin-left: 4px; vertical-align: middle; background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.5);">0</span>
+                            {% endif %}
+                        </a>
                         <a href="/user/profile" class="nav-link"><i class="ph ph-user"></i> Profile</a>
                         <div class="nav-divider"></div>
                         <a href="/user-logout" class="btn btn-danger-outline"><i class="ph ph-sign-out"></i> Logout</a>
@@ -86,6 +95,33 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
+        // Global Toast Notification Helper
+        function showToast(message, category = 'success') {
+            const container = document.querySelector('.flash-container');
+            if (!container) return;
+
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${category} fade-in`;
+            
+            let iconHtml = '<i class="ph-fill ph-check-circle"></i>';
+            if (category === 'danger' || category === 'error') {
+                iconHtml = '<i class="ph-fill ph-warning-circle"></i>';
+            } else if (category !== 'success') {
+                iconHtml = '<i class="ph-fill ph-info"></i>';
+            }
+
+            alertDiv.innerHTML = `${iconHtml} <span>${message}</span>`;
+            container.appendChild(alertDiv);
+
+            // Auto-hide the new message
+            setTimeout(() => {
+                alertDiv.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                alertDiv.style.opacity = '0';
+                alertDiv.style.transform = 'translateY(-10px)';
+                setTimeout(() => { alertDiv.remove(); }, 500);
+            }, 3000);
+        }
+
         // Auto-hide flash messages
         document.addEventListener("DOMContentLoaded", function() {
             setTimeout(function() {
@@ -98,6 +134,88 @@
                 });
             }, 3000);
         });
+
+        // Dynamic AJAX Add to Cart
+        function addToCart(productId) {
+            const button = event.currentTarget || document.activeElement;
+            const originalHTML = button.innerHTML;
+            
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<i class="ph ph-circle-notch spinner" style="animation: spin 1s linear infinite;"></i> Adding...';
+            }
+
+            fetch('/user/add-to-cart/' + productId)
+                .then(response => {
+                    if (response.redirected && response.url.includes('/user-login')) {
+                        window.location.href = response.url;
+                        return;
+                    }
+                    return response.text();
+                })
+                .then(html => {
+                    if (!html) return;
+                    
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newCartCountEl = doc.querySelector('#cart-count');
+                    
+                    if (newCartCountEl) {
+                        const countText = newCartCountEl.textContent.trim();
+                        const cartCountEls = document.querySelectorAll('#cart-count');
+                        cartCountEls.forEach(el => {
+                            el.textContent = countText;
+                            if (parseInt(countText) > 0) {
+                                el.className = 'badge rounded-pill bg-primary';
+                                el.style.background = 'var(--accent-primary)';
+                                el.style.color = '#ffffff';
+                            } else {
+                                el.className = 'badge rounded-pill';
+                                el.style.background = 'rgba(255, 255, 255, 0.1)';
+                                el.style.color = 'rgba(255, 255, 255, 0.5)';
+                            }
+                        });
+                    }
+
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '<i class="ph ph-check"></i> Added!';
+                        setTimeout(() => {
+                            button.innerHTML = originalHTML;
+                        }, 2000);
+                    }
+
+                    showToast('Item successfully added to your cart!', 'success');
+                })
+                .catch(err => {
+                    console.error(err);
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = originalHTML;
+                    }
+                });
+        }
+
+        // Dynamic custom toast injector
+        function showToast(message, type) {
+            const flashContainer = document.querySelector('.flash-container');
+            if (!flashContainer) return;
+
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} fade-in`;
+            alert.innerHTML = `
+                <i class="ph-fill ph-check-circle"></i>
+                <span>${message}</span>
+            `;
+            flashContainer.appendChild(alert);
+
+            setTimeout(function() {
+                alert.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                alert.style.opacity = '0';
+                alert.style.transform = 'translateY(-10px)';
+                setTimeout(function() { alert.remove(); }, 500);
+            }, 3000);
+        }
     </script>
 </body>
 </html>
